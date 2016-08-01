@@ -1,7 +1,5 @@
 package demo;
 
-import java.security.KeyPair;
-
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.actuate.autoconfigure.ManagementServerProperties;
@@ -23,85 +21,119 @@ import org.springframework.security.oauth2.config.annotation.web.configurers.Aut
 import org.springframework.security.oauth2.provider.token.store.JwtAccessTokenConverter;
 import org.springframework.security.oauth2.provider.token.store.KeyStoreKeyFactory;
 import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.SessionAttributes;
+import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurerAdapter;
+
+import javax.sql.DataSource;
+import java.security.KeyPair;
+import java.security.Principal;
 
 @Configuration
 @ComponentScan
 @EnableAutoConfiguration
 @Controller
 @SessionAttributes("authorizationRequest")
-public class AuthserverApplication extends WebMvcConfigurerAdapter {
+public class AuthServerApplication extends WebMvcConfigurerAdapter {
 
-	public static void main(String[] args) {
-		SpringApplication.run(AuthserverApplication.class, args);
-	}
-	
-	@Override
-	public void addViewControllers(ViewControllerRegistry registry) {
-		registry.addViewController("/login").setViewName("login");
-		registry.addViewController("/oauth/confirm_access").setViewName("authorize");
-	}
+    @RestController
+    @RequestMapping("/")
+    public static class HelloController {
+        @RequestMapping("/session")
+        public String hello() {
+            return "hello world";
+        }
+    }
 
-	@Configuration
-	@Order(ManagementServerProperties.ACCESS_OVERRIDE_ORDER)
-	protected static class LoginConfig extends WebSecurityConfigurerAdapter {
-		
-		@Autowired
-		private AuthenticationManager authenticationManager;
-		
-		@Override
-		protected void configure(HttpSecurity http) throws Exception {
-			http.formLogin().loginPage("/login").permitAll().and().authorizeRequests()
-					.anyRequest().authenticated();
-		}
-		
-		@Override
-		protected void configure(AuthenticationManagerBuilder auth) throws Exception {
-			auth.parentAuthenticationManager(authenticationManager);
-		}
-	}
+    @Autowired
+    private HandlerInterceptor webRequestInterceptor;
 
-	@Configuration
-	@EnableAuthorizationServer
-	protected static class OAuth2Config extends AuthorizationServerConfigurerAdapter {
+    @RequestMapping("/hello")
+    @ResponseBody
+    public Principal hello(Principal principal) {
+        return principal;
+    }
 
-		@Autowired
-		private AuthenticationManager authenticationManager;
+    @Override
+    public void addViewControllers(ViewControllerRegistry registry) {
+        registry.addViewController("/login").setViewName("login");
+        registry.addViewController("/oauth/confirm_access").setViewName("authorize");
+    }
 
-		@Bean
-		public JwtAccessTokenConverter jwtAccessTokenConverter() {
-			JwtAccessTokenConverter converter = new JwtAccessTokenConverter();
-			KeyPair keyPair = new KeyStoreKeyFactory(
-					new ClassPathResource("keystore.jks"), "foobar".toCharArray())
-					.getKeyPair("test");
-			converter.setKeyPair(keyPair);
-			return converter;
-		}
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(webRequestInterceptor);
+        super.addInterceptors(registry);
+    }
 
-		@Override
-		public void configure(ClientDetailsServiceConfigurer clients) throws Exception {
-			clients.inMemory()
-					.withClient("acme")
-					.secret("acmesecret")
-					.authorizedGrantTypes("authorization_code", "refresh_token",
-							"password").scopes("openid");
-		}
+    public static void main(String[] args) {
+        SpringApplication.run(AuthServerApplication.class, args);
+    }
 
-		@Override
-		public void configure(AuthorizationServerEndpointsConfigurer endpoints)
-				throws Exception {
-			endpoints.authenticationManager(authenticationManager).accessTokenConverter(
-					jwtAccessTokenConverter());
-		}
+    @Configuration
+    @Order(ManagementServerProperties.ACCESS_OVERRIDE_ORDER)
+    protected static class LoginConfig extends WebSecurityConfigurerAdapter {
 
-		@Override
-		public void configure(AuthorizationServerSecurityConfigurer oauthServer)
-				throws Exception {
-			oauthServer.tokenKeyAccess("permitAll()").checkTokenAccess(
-					"isAuthenticated()");
-		}
+        @Autowired
+        private AuthenticationManager authenticationManager;
 
-	}
+        @Override
+        protected void configure(HttpSecurity http) throws Exception {
+            http.formLogin().loginPage("/login").permitAll().and().authorizeRequests()
+                    .anyRequest().authenticated().and().csrf().disable();
+        }
+
+        @Override
+        protected void configure(AuthenticationManagerBuilder auth) throws Exception {
+            auth.parentAuthenticationManager(authenticationManager);
+        }
+    }
+
+    @Configuration
+    @EnableAuthorizationServer
+    protected static class OAuth2Config extends AuthorizationServerConfigurerAdapter {
+
+        @Autowired
+        private AuthenticationManager authenticationManager;
+
+        @Bean
+        public JwtAccessTokenConverter jwtAccessTokenConverter() {
+            JwtAccessTokenConverter converter = new JwtAccessTokenConverter();
+            KeyPair keyPair = new KeyStoreKeyFactory(new ClassPathResource("keystore.jks"), "foobar".toCharArray()).getKeyPair("test");
+            converter.setKeyPair(keyPair);
+            return converter;
+        }
+
+        @Autowired
+        private DataSource dataSource;
+
+        @Override
+        public void configure(ClientDetailsServiceConfigurer clients) throws Exception {
+            clients.jdbc(dataSource)
+                    .withClient("acme")
+                    .secret("acmesecret")
+                    .redirectUris("http://localhost:911/uaa/oauth/token")
+                    .authorizedGrantTypes("authorization_code", "refresh_token", "password")
+                    .scopes("openid");
+        }
+
+        @Override
+        public void configure(AuthorizationServerEndpointsConfigurer endpoints)
+                throws Exception {
+            endpoints.authenticationManager(authenticationManager)
+                    .accessTokenConverter(jwtAccessTokenConverter());
+        }
+
+        @Override
+        public void configure(AuthorizationServerSecurityConfigurer oauthServer)
+                throws Exception {
+            oauthServer.tokenKeyAccess("permitAll()").checkTokenAccess("isAuthenticated()");
+        }
+
+    }
 }
